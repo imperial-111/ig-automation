@@ -90,6 +90,12 @@ app.get('/dashboard', checkAuth, (req, res) => {
   .stat { font-size: 12px; color: #666; margin-top: 8px; }
   .toggle { font-size: 13px; }
   #newForm { background: white; border: 2px dashed #0070f3; border-radius: 10px; padding: 18px; margin-bottom: 24px; }
+  #mediaGallery { display: flex; gap: 10px; overflow-x: auto; padding: 10px 0; }
+  .media-item { flex: 0 0 110px; cursor: pointer; border: 2px solid transparent; border-radius: 8px; padding: 4px; text-align: center; }
+  .media-item.selected { border-color: #0070f3; background: #eaf3ff; }
+  .media-item img { width: 100%; height: 110px; object-fit: cover; border-radius: 6px; background: #ddd; }
+  .media-item .label { font-size: 10px; color: #666; margin-top: 4px; word-break: break-all; }
+  .media-item .type-badge { font-size: 9px; background: #333; color: white; padding: 1px 5px; border-radius: 4px; display: inline-block; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -98,10 +104,14 @@ app.get('/dashboard', checkAuth, (req, res) => {
 
   <div id="newForm">
     <h3 style="margin-top:0;">+ New Automation</h3>
+
+    <label>Pick a post/Reel (click to select, or leave none selected for ANY post)</label>
+    <div id="mediaGallery">Loading your posts...</div>
+
     <label>Name</label>
     <input type="text" id="n-name" placeholder="e.g. Reel - Free Guide">
-    <label>Target Post/Reel Media ID (leave blank for ANY post)</label>
-    <input type="text" id="n-mediaId" placeholder="e.g. 18117719795045634">
+    <label>Selected Media ID (auto-filled when you click a post above)</label>
+    <input type="text" id="n-mediaId" placeholder="leave blank for ANY post" readonly>
     <label>Trigger keywords (comma separated)</label>
     <input type="text" id="n-keywords" placeholder="info, price, link">
     <label>DM message to send</label>
@@ -113,6 +123,49 @@ app.get('/dashboard', checkAuth, (req, res) => {
 
 <script>
 const password = new URLSearchParams(window.location.search).get('password');
+
+async function loadMedia() {
+  const gallery = document.getElementById('mediaGallery');
+  try {
+    const res = await fetch('/api/media?password=' + password);
+    const data = await res.json();
+    if (data.error) {
+      gallery.innerHTML = '<p style="color:#c00; font-size:13px;">Could not load posts: ' + data.error + '</p>';
+      return;
+    }
+    if (!data.length) {
+      gallery.innerHTML = '<p style="font-size:13px; color:#666;">No posts found.</p>';
+      return;
+    }
+    gallery.innerHTML = '';
+    data.forEach(m => {
+      const thumb = m.thumbnail_url || m.media_url || '';
+      const div = document.createElement('div');
+      div.className = 'media-item';
+      div.dataset.id = m.id;
+      div.innerHTML = \`
+        <img src="\${thumb}" onerror="this.style.opacity=0.2">
+        <div class="label">\${(m.caption || '(no caption)').slice(0, 30)}</div>
+        <div class="type-badge">\${m.media_product_type || m.media_type}</div>
+      \`;
+      div.onclick = () => selectMedia(m.id, div);
+      gallery.appendChild(div);
+    });
+  } catch (err) {
+    gallery.innerHTML = '<p style="color:#c00; font-size:13px;">Failed to load posts.</p>';
+  }
+}
+
+function selectMedia(id, el) {
+  const alreadySelected = el.classList.contains('selected');
+  document.querySelectorAll('.media-item').forEach(x => x.classList.remove('selected'));
+  if (alreadySelected) {
+    document.getElementById('n-mediaId').value = '';
+  } else {
+    el.classList.add('selected');
+    document.getElementById('n-mediaId').value = id;
+  }
+}
 
 async function loadAutomations() {
   const res = await fetch('/api/automations?password=' + password);
@@ -168,6 +221,7 @@ async function deleteAutomation(id) {
 }
 
 loadAutomations();
+loadMedia();
 </script>
 </body>
 </html>
@@ -205,6 +259,27 @@ app.patch('/api/automations/:id', checkAuth, (req, res) => {
 app.delete('/api/automations/:id', checkAuth, (req, res) => {
   automations = automations.filter(a => a.id !== req.params.id);
   res.sendStatus(200);
+});
+
+// ============ FETCH YOUR POSTS/REELS FROM INSTAGRAM ============
+
+app.get('/api/media', checkAuth, async (req, res) => {
+  if (!PAGE_ACCESS_TOKEN) {
+    return res.status(400).json({ error: 'PAGE_ACCESS_TOKEN not set' });
+  }
+  try {
+    const url = `https://graph.instagram.com/v21.0/me/media?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp&limit=25&access_token=${PAGE_ACCESS_TOKEN}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    if (data.error) {
+      console.error('Error fetching media:', data.error);
+      return res.status(400).json({ error: data.error.message });
+    }
+    res.json(data.data || []);
+  } catch (err) {
+    console.error('Error fetching media:', err);
+    res.status(500).json({ error: 'Failed to fetch media' });
+  }
 });
 
 // ============ WEBHOOK VERIFICATION ============
