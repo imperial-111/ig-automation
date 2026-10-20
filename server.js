@@ -11,17 +11,25 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 console.log('Token loaded, length:', PAGE_ACCESS_TOKEN ? PAGE_ACCESS_TOKEN.length : 'MISSING');
 console.log('Token preview:', PAGE_ACCESS_TOKEN ? PAGE_ACCESS_TOKEN.substring(0, 15) + '...' : 'N/A');
 
-// Your trigger keyword — change this to whatever word you want people to comment
+// The word someone must comment to trigger the auto-DM
 const TRIGGER_KEYWORD = 'info';
 
-// Simple in-memory store to avoid double-replying to the same comment
-// (resets if the server restarts — fine for low/medium volume testing)
+// Only comments on these specific post/Reel media IDs will trigger a DM.
+// Get an ID from your Render logs (look for "media": { "id": "..." } in an
+// incoming webhook) or via GET https://graph.instagram.com/v21.0/me/media
+// Leave the array EMPTY ([]) to allow ALL posts instead of specific ones.
+const TARGET_MEDIA_IDS = [
+  '18117719795045634',
+  // add more post/reel IDs here, one per line, comma separated
+];
+
+// Avoids double-replying if Meta resends the same webhook event
 const repliedComments = new Set();
 
-// Home route
+// ---------- Basic routes ----------
+
 app.get('/', (req, res) => res.send('IG automation server is running.'));
 
-// Privacy Policy page (required by Meta before going Live)
 app.get('/privacy-policy', (req, res) => {
   res.send(`
     <html>
@@ -38,7 +46,6 @@ app.get('/privacy-policy', (req, res) => {
   `);
 });
 
-// Data Deletion page (also often required by Meta)
 app.get('/data-deletion', (req, res) => {
   res.send(`
     <html>
@@ -51,7 +58,8 @@ app.get('/data-deletion', (req, res) => {
   `);
 });
 
-// Webhook verification (Meta calls this GET request when you click "Verify and save")
+// ---------- Webhook verification ----------
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -66,7 +74,8 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Webhook events (Meta POSTs here on every comment)
+// ---------- Webhook events ----------
+
 app.post('/webhook', async (req, res) => {
   console.log('Incoming webhook:', JSON.stringify(req.body, null, 2));
 
@@ -77,30 +86,38 @@ app.post('/webhook', async (req, res) => {
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
 
-    if (change?.field === 'comments') {
-      const commentText = change.value.text || '';
-      const commentId = change.value.id;
+    if (change?.field !== 'comments') return;
 
-      if (!commentId) return;
+    const commentText = change.value.text || '';
+    const commentId = change.value.id;
+    const mediaId = change.value.media?.id;
 
-      // Avoid double-replying to the same comment
-      if (repliedComments.has(commentId)) {
-        console.log('Already replied to this comment, skipping:', commentId);
-        return;
-      }
+    if (!commentId) return;
 
-      if (commentText.toLowerCase().includes(TRIGGER_KEYWORD)) {
-        await sendPrivateReply(commentId, "Thanks for your comment! Here's the info you asked for: ...");
-        repliedComments.add(commentId);
-      }
+    // Only respond to comments on specific target posts, if any are set
+    if (TARGET_MEDIA_IDS.length > 0 && !TARGET_MEDIA_IDS.includes(mediaId)) {
+      console.log('Comment is on a non-target post, skipping. Media ID:', mediaId);
+      return;
+    }
+
+    if (repliedComments.has(commentId)) {
+      console.log('Already replied to this comment, skipping:', commentId);
+      return;
+    }
+
+    if (commentText.toLowerCase().includes(TRIGGER_KEYWORD)) {
+      await sendPrivateReply(commentId, "Thanks for your comment! Here's the info you asked for: ...");
+      repliedComments.add(commentId);
     }
   } catch (err) {
     console.error('Error processing webhook:', err);
   }
 });
 
-// Sends a DM via Instagram's Private Reply API — replies to the comment itself,
-// bypassing the normal 24-hour messaging window restriction.
+// ---------- Send the DM ----------
+// Uses Instagram's Private Reply API, which replies to the comment itself
+// and bypasses the normal 24-hour messaging window restriction.
+
 async function sendPrivateReply(commentId, messageText) {
   const url = `https://graph.instagram.com/v21.0/${commentId}/private_replies?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
