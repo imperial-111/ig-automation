@@ -7,6 +7,8 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "my_secret_verify_123";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
+console.log('Token loaded, length:', PAGE_ACCESS_TOKEN ? PAGE_ACCESS_TOKEN.length : 'MISSING');
+console.log('Token preview:', PAGE_ACCESS_TOKEN ? PAGE_ACCESS_TOKEN.substring(0, 15) + '...' : 'N/A');
 
 // Home route
 app.get('/', (req, res) => res.send('IG automation server is running.'));
