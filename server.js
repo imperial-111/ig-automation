@@ -11,7 +11,7 @@ const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || "changeme123";
 
 // Set to true to actually call Instagram's API, false to just log what would be sent
-const LIVE_SENDING = false;
+const LIVE_SENDING = true;
 
 console.log('Token loaded, length:', PAGE_ACCESS_TOKEN ? PAGE_ACCESS_TOKEN.length : 'MISSING');
 
