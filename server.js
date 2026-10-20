@@ -248,7 +248,7 @@ app.post('/webhook', async (req, res) => {
       await sendPrivateReply(commentId, match.dmMessage);
       match.triggeredCount += 1;
       repliedComments.add(commentId);
-      console.log(\`Matched automation "\${match.name}" for comment \${commentId}\`);
+      console.log('Matched automation "' + match.name + '" for comment ' + commentId);
     }
   } catch (err) {
     console.error('Error processing webhook:', err);
