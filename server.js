@@ -8,22 +8,20 @@ app.use(bodyParser.json());
 
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN || "my_secret_verify_123";
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
-// NEW: You must add your Facebook Page ID to Render Environment Variables
-const PAGE_ID = process.env.PAGE_ID; 
 const DASHBOARD_PASSWORD = process.env.DASHBOARD_PASSWORD || "changeme123";
 
 // Set to true to actually call Instagram's API, false to just log what would be sent
-const LIVE_SENDING = true;
+const LIVE_SENDING = false;
 
 console.log('Token loaded, length:', PAGE_ACCESS_TOKEN ? PAGE_ACCESS_TOKEN.length : 'MISSING');
-console.log('Page ID loaded:', PAGE_ID ? PAGE_ID : 'MISSING');
 
 // ============ IN-MEMORY STORE ============
+// NOTE: resets on server restart/redeploy. Replace with a real DB once this works.
 let automations = [
   {
     id: crypto.randomUUID(),
     name: 'Example automation',
-    mediaId: '',          
+    mediaId: '',          // empty string = applies to ANY post
     keywords: ['info'],
     dmMessage: "Thanks for your comment! Here's the info you asked for: ...",
     active: true,
@@ -33,7 +31,7 @@ let automations = [
 
 const repliedComments = new Set();
 
-// ============ AUTH MIDDLEWARE ============
+// ============ AUTH MIDDLEWARE FOR DASHBOARD/API ============
 function checkAuth(req, res, next) {
   const pass = req.query.password || req.headers['x-dashboard-password'];
   if (pass !== DASHBOARD_PASSWORD) {
@@ -43,6 +41,7 @@ function checkAuth(req, res, next) {
 }
 
 // ============ BASIC ROUTES ============
+
 app.get('/', (req, res) => res.send('IG automation server is running. Visit /dashboard?password=YOUR_PASSWORD to manage automations.'));
 
 app.get('/privacy-policy', (req, res) => {
@@ -69,6 +68,7 @@ app.get('/data-deletion', (req, res) => {
 });
 
 // ============ DASHBOARD UI ============
+
 app.get('/dashboard', checkAuth, (req, res) => {
   res.send(`
 <!DOCTYPE html>
@@ -100,7 +100,7 @@ app.get('/dashboard', checkAuth, (req, res) => {
 </head>
 <body>
   <h1>📩 Instagram Auto-DM Dashboard</h1>
-  <p style="color:#666; font-size:14px;">Live sending is currently <strong>${LIVE_SENDING ? 'ON' : 'OFF (mock mode)'}</strong>.</p>
+  <p style="color:#666; font-size:14px;">Live sending is currently <strong>${LIVE_SENDING ? 'ON' : 'OFF (mock mode)'}</strong>. Edit LIVE_SENDING in server.js to change.</p>
 
   <div id="newForm">
     <h3 style="margin-top:0;">+ New Automation</h3>
@@ -229,6 +229,7 @@ loadMedia();
 });
 
 // ============ API: CRUD FOR AUTOMATIONS ============
+
 app.get('/api/automations', checkAuth, (req, res) => {
   res.json(automations);
 });
@@ -260,14 +261,14 @@ app.delete('/api/automations/:id', checkAuth, (req, res) => {
   res.sendStatus(200);
 });
 
-// ============ FETCH YOUR POSTS/REELS (UPDATED TO GRAPH.FACEBOOK.COM) ============
+// ============ FETCH YOUR POSTS/REELS FROM INSTAGRAM ============
+
 app.get('/api/media', checkAuth, async (req, res) => {
-  if (!PAGE_ACCESS_TOKEN || !PAGE_ID) {
-    return res.status(400).json({ error: 'PAGE_ACCESS_TOKEN or PAGE_ID not set' });
+  if (!PAGE_ACCESS_TOKEN) {
+    return res.status(400).json({ error: 'PAGE_ACCESS_TOKEN not set' });
   }
   try {
-    // We now use the Page ID to fetch Instagram media via the Facebook Graph API
-    const url = `https://graph.facebook.com/v21.0/${PAGE_ID}/media?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp&limit=25&access_token=${PAGE_ACCESS_TOKEN}`;
+    const url = `https://graph.instagram.com/v21.0/me/media?fields=id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp&limit=25&access_token=${PAGE_ACCESS_TOKEN}`;
     const response = await fetch(url);
     const data = await response.json();
     if (data.error) {
@@ -282,6 +283,7 @@ app.get('/api/media', checkAuth, async (req, res) => {
 });
 
 // ============ WEBHOOK VERIFICATION ============
+
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -293,7 +295,8 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// ============ WEBHOOK EVENTS ============
+// ============ WEBHOOK EVENTS — matches against ALL active automations ============
+
 app.post('/webhook', async (req, res) => {
   console.log('Incoming webhook:', JSON.stringify(req.body, null, 2));
   res.sendStatus(200);
@@ -309,6 +312,7 @@ app.post('/webhook', async (req, res) => {
 
     if (!commentId || repliedComments.has(commentId)) return;
 
+    // Find the first active automation that matches this post and keyword
     const match = automations.find(a =>
       a.active &&
       (a.mediaId === '' || a.mediaId === mediaId) &&
@@ -326,29 +330,20 @@ app.post('/webhook', async (req, res) => {
   }
 });
 
-// ============ SEND DM (UPDATED TO FACEBOOK GRAPH API) ============
+// ============ SEND DM (mock or live) ============
+
 async function sendPrivateReply(commentId, messageText) {
   if (!LIVE_SENDING) {
     console.log('[MOCK MODE] Would send DM for comment', commentId, '-> "' + messageText + '"');
     return;
   }
 
-  if (!PAGE_ACCESS_TOKEN || !PAGE_ID) {
-    console.error('Cannot send DM: PAGE_ACCESS_TOKEN or PAGE_ID is missing.');
-    return;
-  }
-
-  // The correct endpoint for Facebook Login / Page tokens is /<PAGE_ID>/messages
-  const url = `https://graph.facebook.com/v21.0/${PAGE_ID}/messages?access_token=${PAGE_ACCESS_TOKEN}`;
-  
+  const url = `https://graph.instagram.com/v21.0/${commentId}/private_replies?access_token=${PAGE_ACCESS_TOKEN}`;
   try {
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        recipient: { comment_id: commentId },
-        message: { text: messageText }
-      })
+      body: JSON.stringify({ message: messageText })
     });
     const data = await response.json();
     console.log('DM send result:', data);
